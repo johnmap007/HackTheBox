@@ -398,6 +398,8 @@ Document here:
 
 Document here how you set up persistence on the target
 
+# Proof of Pwn
+Paste link to HTB Pwn notification after owning root
 
 
 # Skills Learned

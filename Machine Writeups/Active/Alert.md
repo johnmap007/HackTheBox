@@ -1,4 +1,4 @@
-Tags: #XSS #LFI #Misconfiguration #Hidden-Subdomains #File-Upload #Directory-Traversal #Password-Cracking #Port-Forwarding #Apache #Ubuntu #Easy #Linux
+Tags: #XSS #LFI #Misconfiguration #Hidden-Subdomains #File-Upload #Directory-Traversal #Password-Cracking #Port-Forwarding #Apache #Easy #Linux/Ubuntu
 # Nmap Results
 ```text
 # Nmap 7.94SVN scan initiated Thu Nov 28 12:21:49 2024 as: /usr/lib/nmap/nmap -sC -sV -oA nmap/alert 10.10.11.44
@@ -442,12 +442,6 @@ After saving, we set up our listener with `nc`, navigate to **/config/exploit.ph
 	4. `id` and `cat /etc/group` for finding special groups that a user might belong to
 - Port forwarding local ports using `ssh -L <local port>:<remote host>:<remote port> <user>@<SSH_server>`
 - Using `ffuf` to enumerate subdomains instead of `gobuster` in vhost mode. 
-# **Flags**
 
-> [!tldr]- User
-> 
-> `333183e3f9d982cb72b1b5a9ab40f09e`
-
-> [!tldr]- Root
-> 
-> `8ebb42bdb818f9c5c6665de7995233c1`
+# Proof of Pwn
+https://www.hackthebox.com/achievement/machine/391579/636
