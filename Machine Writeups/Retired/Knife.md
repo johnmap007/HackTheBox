@@ -401,6 +401,5 @@ Document here how you set up persistence on the target
 # Skills Learned
 Document here what you've learned after completing the box
 <br>
-<br>
 # Proof of Pwn
 Paste link to HTB Pwn notification after owning root

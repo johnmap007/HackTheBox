@@ -1,4 +1,4 @@
-Tags: #Linux/Ubuntu #Easy #Nginx #RCE #HTTP-Authentication #Path-Injection #Source-Code-Analysis #Plaintext-Creds
+scTags: #Linux/Ubuntu #Easy #Nginx #RCE #HTTP-Authentication #Path-Injection #Source-Code-Analysis #Plaintext-Creds
 # **Nmap Results**
 
 ```text

@@ -443,5 +443,6 @@ After saving, we set up our listener with `nc`, navigate to **/config/exploit.ph
 - Port forwarding local ports using `ssh -L <local port>:<remote host>:<remote port> <user>@<SSH_server>`
 - Using `ffuf` to enumerate subdomains instead of `gobuster` in vhost mode. 
 
+<br>
 # Proof of Pwn
 https://www.hackthebox.com/achievement/machine/391579/636
