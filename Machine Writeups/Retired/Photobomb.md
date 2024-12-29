@@ -311,7 +311,7 @@ Finally, we execute `cleanup.sh` with a custom PATH variable. We only want to ad
 Putting it all together, our command looks like this: `sudo PATH=/dev/shm:$PATH /opt/cleanup.sh` and we get a root shell!
 <br>
 <br>
-# Skills Learned
+# Skills/Concepts Learned
 
 - You can pass HTTP Authentication credentials right in the URL like so: `http://username:password@example.com/path/to/page`. This way, you can skip the pop up asking you to sign in. 
 - Given testable web parameters, don't immediately assume they're vulnerable to LFI. **Pass random/unexpected data and see if the web server behaves differently or returns something unexpected**

@@ -1,4 +1,4 @@
-Tags: #XSS #LFI #Misconfiguration #Hidden-Subdomains #File-Upload #Directory-Traversal #Password-Cracking #Port-Forwarding #Apache #Easy #Linux/Ubuntu
+Tags: #XSS #LFI #Hidden-Subdomains #File-Upload #Directory-Traversal #Password-Cracking #Port-Forwarding #Overprivileged-Processes #Apache #Easy #Linux/Ubuntu
 # Nmap Results
 ```text
 # Nmap 7.94SVN scan initiated Thu Nov 28 12:21:49 2024 as: /usr/lib/nmap/nmap -sC -sV -oA nmap/alert 10.10.11.44
@@ -431,7 +431,7 @@ After saving, we set up our listener with `nc`, navigate to **/config/exploit.ph
 <br>
 <br>
 
-# Skills Learned
+# Skills/Concepts Learned
 - Always enumerate as much as you can (hidden directories, subdomains, etc). Never skip this step.
 - Basics of Stored XSS (Cross-site Scripting) - Test with simple one-liner: `<script>alert(1)</script>`, and if the JS gets executed, the webserver is vulnerable to XSS. 
 - LFI (Local File Inclusion) with Directory Traversal - Given a URL parameter that fetches a file, if you can escape the site's root directory with multiple `../` characters and fetch another file like `/etc/passwd`, the site is vulnerable to LFI/Directory Traversal 

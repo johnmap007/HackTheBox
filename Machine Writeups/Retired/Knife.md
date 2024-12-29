@@ -1,405 +1,142 @@
-Tags: 
+Tags: #Linux/Ubuntu #Easy #Apache #PHP #Backdoor #HTTP-Headers 
 # **Nmap Results**
 
 ```text
-Nmap output here
+Nmap scan report for 10.10.10.242
+Host is up (0.12s latency).
+Not shown: 998 closed tcp ports (reset)
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.2 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 be:54:9c:a3:67:c3:15:c3:64:71:7f:6a:53:4a:4c:21 (RSA)
+|   256 bf:8a:3f:d4:06:e9:2e:87:4e:c9:7e:ab:22:0e:c0:ee (ECDSA)
+|_  256 1a:de:a1:cc:37:ce:53:bb:1b:fb:2b:0b:ad:b3:f6:84 (ED25519)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title:  Emergent Medical Idea
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 15.96 seconds
 ```
 <br>
 <br>
 
 # **Service Enumeration**
-Document here:
-* Screenshots (web browser, terminal screen)
-* Service version numbers
-* Document your findings when interacting with the service at various stages
+Nmap scan report shows 2 open ports: Port 22 for SSH and port 80 for an **Apache** webserver. Before navigating to the website, I used `searchsploit` to find any exploits for this specific version of Apache httpd (2.4.41) and there were some of interest:
 
+![[Pasted image 20241226112820.png]]
 
+I copied the last one to my workspace and will use that later, but first I want to enumerate the website to see if I find anything else. Like always, we run `feroxbuster` to find any hidden directories, however no results were returned except for the root directory itself, so we'll proceed with the exploit:
+
+![[Pasted image 20241226114736.png]]
+
+Unfortunately this exploit was unsuccessful. I went ahead and pulled the other 3 exploits but none of them worked either. I'm not surprised that they didn't work, as the searchsploit output didn't say the exploits affected versions 2.4.49 and below, but just 2.4.49 or 2.4.50. However, It was still worth a try. I then used google to search for exploits but still couldn't find anything
+
+The next thing I tried is using **burpsuite** to intercept the request to the homepage, send it to the repeater, and analyzing it to see if I find anything interesting in the request or response headers. Here's what it found:
+
+![[Pasted image 20241226115848.png]]
+
+There is a line exposing service and version info, which is `X-Powered-By: PHP/8.1.0-dev`. This suggests that the site is run by a PHP server. To confirm this, we can navigate to **index.php** in our browser and see if we get the same page as before, and sure enough, we do.
+
+Now let's see if we find any vulnerabilities within this version of PHP. We'll use `searchsploit` once again by writing `searchsploit php 8.1.0-dev`:
+
+![[Pasted image 20241226120740.png]]
 <br>
 <br>
-
 # **Exploitation**
 ## **Initial Access**
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works against the service
-* Any modified code (and why you modified it)
-* Proof of exploit (screenshot of reverse shell with target IP address output)
+Let's pull the 2nd one and take a look at its code:
 
+![[Pasted image 20241226122343.png]]
+
+The exploit contains comments about this specific version of PHP being released with a backdoor. The creator linked a blog page that dives deeper into how it works, which you can access [here](https://flast101.github.io/php-8.1.0-dev-backdoor-rce/). Essentially, attackers impersonated PHP creator Rasmus Lerdorf and maintainer Nikita Popov and made commits on their behalf, most likely to reduce suspicion. Their backdoor relied on the presence of an unusual header `User-Agentt` and the value starting with **"zerodium"**. If these conditions were met, anything after that string was evaluated as PHP code. For example, if you wanted to execute `phpinfo();`, you would craft your request to include the line `User-Agentt: zerodiumphpinfo();`
+
+The exploit's code creates a pseudo-shell with an infinite loop that does the following:
+1. Accepts input from the attacker
+2. Crafts the malicious header and pastes the user input within that header 
+3. Sends the request and prints the server response, usually the output of the executed command.
+
+Let's go ahead and execute this script. We want a shell on the system so here's what our command will look like:
+
+![[Pasted image 20241226135049.png]]
+I used the `busybox` command instead of the traditional `bash -i` string, since that didn't work because of the special characters causing PHP to misinterpret what I wanted. 
+
+We are now logged in as James and can proceed with privilege escalation.
 <br>
 <br>
 
 ## **Post-Exploit Enumeration**
 ### **Operating Environment**
 
-> [!tldr]- OS &amp; Kernel
->Document here:
->- Windows
->    - `systeminfo` or `Get-ComputerInfo` output
->    - Check environment variables:
- >       - CMD: `set`
- >       - PowerShell: `Get-ChildItem Env:\`
->
->- *nix
->    - `uname -a` output
->    - `cat /etc/os-release` (or similar) output
->    - Check environment variables:
->       - `env` or `set`
-
 > [!tldr]- Current User
-> Document here:
-> - Windows
->     - `whoami /all` output
->   
-> - *nix
->     - `id` output
->     - `sudo -l` output
+> - `id` output:
+> 	`uid=1000(james) gid=1000(james) groups=1000(james)`
+> - `sudo -l` output:
+> 	```
+> 	Matching Defaults entries for james on knife:
+> 	    env_reset, mail_badpass,
+> 	    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+> 	
+> 	User james may run the following commands on knife:
+> 	    (root) NOPASSWD: /usr/bin/knife
+>	```
 
 <br>
-
-### **Users and Groups**
-
-> [!tldr]- Local Users
-> Document here any interesting username(s) after running the below commands:
-> - Windows
->     - `net user` or `Get-LocalUser` output
->     - `net user <username>` or `Get-LocalUser <username> | Select-Object *` to enumerate details about specific users
->     - Can you dump and pass/crack hashes from SAM using your current access?
-> 
-> - *nix
->     - `cat /etc/passwd` output
-
-> [!tldr]- Local Groups
-> Document here any interesting group(s) after running the below commands:
-> - Windows
->     - `net localgroup` or `Get-LocalGroup` output
->     - `net localgroup <group_name>` or `Get-LocalGroupMember <group_name> | Select-Object *` to enumerate users of specific groups
->   
-> - *nix
->     - `cat /etc/group` output
->     - `cat /etc/group | grep <username>` to check group memberships of specific users
-
-> [!tldr]- Domain Users (Standalone Domain Controller or Network)
-> Document here any interesting username(s) after running the below commands:
-> - Windows
->     - `net user /domain` or `Get-ADUser -Filter * -Properties *` output
->     - `net user <username> /domain` or `Get-ADUser -Identity <username> -Properties *` to enumerate details about specific domain users
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
->     - Can you dump and pass/crack local user / admin hashes from the SAM using your current access?
->     - Can you dump and pass/crack hashes from LSA using your current access?
-> 
-> - *nix
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Check for log entries containing possible usernames
-> 
->         - `find /var/log -type f -readable -exec grep -ail '<realm_domain_name>' {} \; 2>/dev/null`
->         - Then, grep through each log file and remove any garbage from potential binary files:
-> 
->           - Using strings: `strings /var/log/filename | grep -i '<realm_domain_name>'`
->           - If strings not available, try using od: `od -An -S 1 /var/log/filename | grep -i '<realm_domain_name>'`
->           - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/log/filename`
-> 
->         - Validate findings:
->           - Check if discovered usernames are valid: `getent passwd <domain_username>`
->           - If valid, check user group memberships: List `id <domain_username>`
->         - Check domain password and lockout policy for password spray feasibility
-> 
->       - See `Domain Groups`, as certain commands there can reveal some additional usernames
-> 
->      - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all users from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=account'`
-> 
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try best-effort dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*user.*' | grep -iv disabled`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
-> [!tldr]- Domain Groups (Standalone Domain Controller or Network)
-> Document here any interesting group(s) after running the below commands:
-> - Windows
->     - `net group /domain` or `Get-ADGroup -Filter * -Properties *` output
->     - `net group <group_name> /domain` or `Get-ADGroup -Identity <group_name> | Get-ADGroupMember -Recursive` to enumerate members of specific domain groups
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
-> 
-> - *nix
-> 
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Enumerate default Active Directory security groups: https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-groups#default-active-directory-security-groups
-> 
->         - `getent group 'Domain Admins@<realm_domain_name>'`
->         - `getent group 'Domain Users@<realm_domain_name>'`
->         - NOTE: `getent` will only return domain group members that have been cached on the local system, not all group members in the domain
->         - This can still build a substantial user list for password spraying (check domain password and lockout policy)
-> 
->     - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all groups from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=group'`
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*group.*' | grep -i '^CN='`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
-<br>
-
-### **Network Configurations**
-
-> [!tldr]- Network Interfaces
-> Document here any interesting / additional interfaces:
->   
-> - Windows
->     - `ipconfig` or `Get-NetAdapter` output
->   
-> - *nix
->     - `ip address` or `ifconfig` output
-
->[!tldr]- Open Ports
-> Document here any ports listening on loopback or not available to the outside:
->   
-> - Windows
->     - `netstat -ano | findstr /i listening` or `Get-NetTCPConnection -State Listen` output
->   
-> - *nix
->     - `netstat -tanup | grep -i listen` or `ss -tanup | grep -i listen` output
-
-> [!tldr]- ARP Table
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `arp -a` or `Get-NetNeighbor` output
-> - *nix
->     - `ip neigh` or `arp -a` output
-
-> [!tldr]- Routes
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `route print` or `Get-NetRoute` output
-> - *nix
->     - `ip route` or `route` output
-
-> [!tldr]- Ping Sweep
->
-> If the host has access to additional routes / interfaces:
->
->- Look at the IP address space and network mask
->- Find a ping sweep script that will work for the target network
->- Or you could try:
->	- Transfering `nmap` or some other host discover tool to the host
->	- Set up a SOCKS proxy and try a port scan through the foothold
-
-<br>
-
-### **Processes and Services**
-
-> [!tldr]- Interesting Processes
->
-> First...
-> Enumerate processes:
->
-> - Windows
->     - `tasklist`
->     - `Get-Process`
->     - `Get-CimInstance -ClassName Win32_Process | Select-Object Name, @{Name = 'Owner' ; Expression = {$owner = $_ | Invoke-CimMethod -MethodName GetOwner -ErrorAction SilentlyContinue ; if ($owner.ReturnValue -eq 0) {$owner.Domain + '\' + $owner.User}}}, CommandLine | Sort-Object Owner | Format-List`
->
-> - *nix
->     - `ps aux --sort user`
->
-> Then...
-> Document here:
->    - Any interesting processes run by users/administrators
->    - Any vulnerable applications
->    - Any intersting command line arguments visible
-
-> [!tldr]- Interesting Services
->
-> - Windows
->     - First...
->     Enumerate services:
->           - `sc.exe query`
->               - Then `sc.exe qc <service-name>`
->             - List the configuration for any interesting services
->           - `Get-CimInstance -ClassName Win32_Service | Select-Object Name, StartName, PathName | Sort-Object Name | Format-List`
->     - Then...
->       Check for things like:
->           - Vulnerable service versions
->         - Unquoted service path
->         - Service path permissions too open?
->           - Can you overwrite the service binary?
->           - DLL injection?
->
-> - *nix
->     - First...
->       Enumerate services:
->         - `service --status-all` or `systemctl list-units --type=service --state=running`
->     - Then...
->     Check for things like:
->         - Vulnerable service versions
->         - Configuration files with passwords or other information
->         - Writable unit files
->             - One-liner to check for writable service unit files: `systemctl list-units --state=running --type=service | grep '\.service' | awk -v FS=' ' '{print $1}' | xargs -I % systemctl status % | grep 'Loaded:' | cut -d '(' -f 2 | cut -d ';' -f 1 | xargs -I % find % -writable 2>/dev/null`
->           - Writable service binaries
->
-> Then...
-> Document here:
->    - Any interesting services or vulnerabilities
->    - Any vulnerable service versions
->    - Any intersting configuration files
-
-<br>
-
-### **Scheduled Tasks**
-
-> [!tldr]- Interesting Scheduled Tasks
->
-> First...
-> Enumerate scheduled tasks:
->
-> - Windows
->     - `schtasks /QUERY /FO LIST /V | findstr /i /c:"taskname" /c:"run as user" /c:"task to run"`
->     - `Get-CimInstance -Namespace Root/Microsoft/Windows/TaskScheduler -ClassName MSFT_ScheduledTask | Select-Object TaskName, @{Name = 'User' ; Expression = {$_.Principal.UserId}}, @{Name = 'Action' ; Expression = {($_.Actions.Execute + ' ' + $_.Actions.Arguments)}} | Format-List`
-> - *nix
->     - `crontab -l`
->     - `cat /etc/cron* 2>/dev/null`
->     - `cat /var/spool/cron/crontabs/* 2>/dev/null`
->
-> Then...
-> Document here:
->    - Any interesting scheduled tasks
->    - Any writable paths in the scheduled task
->    - Any intersting command line arguments visible
-
-<br>
-
 ### **Interesting Files**
 
-> [!tldr]- C:\InterestingDir\Interesting-File1.txt
->
->
-> - Windows
->     - Check for writable files and directories
->         - See https://github.com/0xBEN/CTF-Scripts/blob/main/HackTheBox/Axlle/Find-FileAccess.ps1
->     - Check for configuration files with passwords and other interesting info
->     - Check for scripts with external dependencies that can be overwritten or changed
->     - Some interesting places to check
->       - Check `PATH` variable for current user for possible interesting locations
-> 	      - CMD: `echo %PATH%`
-> 	      - PowerShell: `$env:Path`
->       - Also check for hidden items
->       - PowerShell History File: `(Get-PSReadLineOption).HistorySavePath`
->       - I reference `%SYSTEMDRIVE%`, as `C:` is not always the system volume
->           - `%SYSTEMDRIVE%\interesting_folder`
->           - `%SYSTEMDRIVE%\Users\user_name`
->               - Desktop, Downloads, Documents, .ssh, etc
->               - AppData (may also have some interesting things in Local, Roaming)
->           - `%SYSTEMDRIVE%\Windows\System32\drivers\etc\hosts`
->           - `%SYSTEMDRIVE%\inetpub`
->           - `%SYSTEMDRIVE%\Program Files\program_name`
->           - `%SYSTEMDRIVE%\Program Files (x86)\program_name`
->           - `%SYSTEMDRIVE%\ProgramData`
->           - `%SYSTEMDRIVE%\Temp`
->           - `%SYSTEMDRIVE%\Windows\Temp`
->       - Check the Registry for passwords, configurations, interesting text
->           - `HKEY_LOCAL_MACHINE` or `HKLM`
->           - `HKEY_CURRENT_USER` or `HKCU`
->           - Search the `HKLM` hive recursively for the word `password`
->               - `reg query HKLM /f password /t REG_SZ /s`
->
-> - *nix
->     - Check for SUID binaries
->         - `find / -type f -perm /4000 -exec ls -l {} \; 2>/dev/null`
->     - Check for interesting / writable scripts, writable directories or files
->         - `find /etc -writable -exec ls -l {} \; 2>/dev/null`
->         - `find / -type f \( -user $(whoami) -o -group $(whoami) \) -exec ls -l {} \; 2>/dev/null
->     - Check for configuration files with passwords and other interesting info
->     - Check for scripts with external dependencies that can be overwritten or changed
->     - Use strings on interesting binaries to check for relative binary names and $PATH hijacking
->     - Some interesting places to check (check for hidden items)
->       - Check `PATH` variable for current user for possible interesting locations: `echo $PATH`
->       - `/interesting_folder`
->       - `/home/user_name`
->         - `.profile`
->         - `.bashrc`, `.zshrc`
->         - `.bash_history`, `.zsh_history`
->         - Desktop, Downloads, Documents, .ssh, etc.
->         - PowerShell History File: `(Get-PSReadLineOption).HistorySavePath`
->       - `/var/www/interesting_folder`
->       - `/var/mail/user_name`
->       - `/opt/interesting_folder`
->       - `/usr/local/interesting_folder`
->       - `/usr/local/bin/interesting_folder`
->       - `/usr/local/share/interesting_folder`
->       - `/etc/hosts`
->       - `/tmp`
->       - `/mnt`
->       - `/media`
->       - `/etc`
->         - Look for interesting service folders
->         - Check for readable and/or writable configuration files
->         - May find cleartext passwords
+> [!tldr]- /opt/opscode
+>`ls -la` output:
+> ```
+> total 232
+> drwxr-xr-x  8 root root   4096 May 18  2021 .
+> drwxr-xr-x  5 root root   4096 May 18  2021 ..
+> drwxr-xr-x  2 root root   4096 May 18  2021 bin
+> drwxr-xr-x 25 root root   4096 May 18  2021 embedded
+> drwxr-xr-x  2 root root   4096 May 18  2021 init
+> -rw-r--r--  1 root root 123039 Apr 22  2021 LICENSE
+> drwxr-xr-x  2 root root  49152 May 18  2021 LICENSES
+> drwxr-xr-x  2 root root   4096 May 18  2021 service
+> drwxr-xr-x 10 root root   4096 May 18  2021 sv
+> -rw-r--r--  1 root root  20478 Apr 22  2021 version-manifest.json
+> -rw-r--r--  1 root root   9135 Apr 22  2021 version-manifest.txt
+> ```
 
-> [!tldr]- /opt/interesting_dir/interesting-file2.txt
->
-> Add full file contents
-> Or snippet of file contents
+>[!tldr]- /opt/chef-workstation
+> `ls -la` output:
+> ```
+> total 184
+> drwxr-xr-x 7 root root  4096 May 18  2021 .
+> drwxr-xr-x 5 root root  4096 May 18  2021 ..
+> drwxr-xr-x 2 root root  4096 May 18  2021 bin
+> drwxr-xr-x 3 root root  4096 May 18  2021 components
+> drwxr-xr-x 9 root root  4096 May 18  2021 embedded
+> -rw-r--r-- 1 root root 13175 Feb 15  2021 gem-version-manifest.json
+> drwxr-xr-x 2 root root  4096 May 18  2021 gitbin
+> -rw-r--r-- 1 root root 85859 Feb 15  2021 LICENSE
+> drwxr-xr-x 2 root root 36864 May 18  2021 LICENSES
+> -rw-r--r-- 1 root root 13681 Feb 15  2021 version-manifest.json
+> -rw-r--r-- 1 root root  4287 Feb 15  2021 version-manifest.txt
+> ``` 
 
 <br>
 <br>
-
 # **Privilege Escalation**  
+The output of `sudo -l` shows we can run `/usr/bin/knife` as root without a password. **Knife** is a tool within the **chef-workstation** program we found in the `/opt` directory. Chef workstation is a tool **written in ruby** that helps developers and sysadmins manage and automate IT infrastructure. Knife is the command line tool that allows you to communicate with the Chef server, where all "cookbooks", "recipes", etc are stored, all of which dictate how a server (usually group of servers), are configured and updated. 
 
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works 
-* Any modified code (and why you modified it)
-* Proof of privilege escalation (screenshot showing ip address and privileged username)
+According to the documentation, **Knife** contains a sub-command **exec** that allows you to execute ruby scripts "in the context of a fully configured Chef Infra Client". This sub command has an option **-E** that allows you to pass a string of ruby code instead of a full file/script.
 
-<br>
-<br>
+Since we are running this command as root, the subsequent ruby code will assume the privileges of root as well. The easiest way to get a root shell is to call `system("bash");`, which will spawn a shell. So our command is:
 
-# **Persistence**
-Document here how you set up persistence on the target
+`sudo /usr/bin/knife exec -E 'system("bash");'`
+
+And just like that, we are root. 
 <br>
 <br>
-# Skills Learned
-Document here what you've learned after completing the box
+# Skills/Concepts Learned
+- `searchsploit` is an amazing tool for searching through **ExploitDB** for older versions of services, but pay attention to the versions each specific exploit affects. Just because it says it affects version 2.4.50 of Apache doesn't mean it will affect older versions, unless it specifies "< 2.4.50"
+- If searchsploit fails, do some googling online and look out for potential exploits/POCs on github or other sites that disclose and explain a service's vulnerability. 
+- In **burpsuite**, pay attention to unusual lines in the request or response headers.
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://www.hackthebox.com/achievement/machine/391579/347
