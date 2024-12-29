@@ -1,7 +1,6 @@
 Tags: #XSS #LFI #Hidden-Subdomains #File-Upload #Directory-Traversal #Password-Cracking #Port-Forwarding #Overprivileged-Processes #Apache #Easy #Linux/Ubuntu
 # Nmap Results
 ```text
-# Nmap 7.94SVN scan initiated Thu Nov 28 12:21:49 2024 as: /usr/lib/nmap/nmap -sC -sV -oA nmap/alert 10.10.11.44
 Nmap scan report for 10.10.11.44
 Host is up (0.086s latency).
 Not shown: 998 closed tcp ports (reset)
@@ -17,7 +16,6 @@ PORT   STATE SERVICE VERSION
 Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 
 Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-# Nmap done at Thu Nov 28 12:22:00 2024 -- 1 IP address (1 host up) scanned in 11.24 seconds
 ```
 
 
