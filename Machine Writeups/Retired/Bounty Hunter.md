@@ -240,11 +240,13 @@ And now we're root!
 <br>
 <br>
 # Skills Learned
-* Using the -x flag in `feroxbuster` with wordlists like `raft-small-words` or its medium version in seclists is useful for when you know the target site is using a particular framework and ==you want to enumerate files associated with it==. For example, if the site is running PHP, you can scan for .php scripts by passing `-x php` and find valuable info
-* XML External Entity (XXE) 
-	* **ELABORATE MORE ON THIS**
-* The `__import__()` function in python is useful for importing modules when the usual `import` keyword is disallowed or doesn't work for some other reason. For example, if you want to import the `os` module and call the `system` method, you would run `__import__('os').system("<command to run>")`
+* Using the -x flag in `feroxbuster` with wordlists like `raft-small-words` or its medium version in seclists is useful for when you know the target site is using a particular framework and ==you want to enumerate files associated with it==. 
+	* For example, if the site is running PHP, you can scan for .php scripts by passing `-x php` and find valuable info
+* XML External Entity (XXE) is a vulnerability that can lead to many others such as LFI, SSRF, and even command injection, but in this case it was just LFI. 
+	* External entities are a legitimate feature of XML but when no filters are put in place to prevent referencing sensitive data on the local machine or malicious URLs, that's where the problem arises
+* In python, `__import__()` is a built-in function useful for importing modules when the usual `import` keyword is disallowed or doesn't work for some other reason. For example, if you want to import the `os` module and call the `system` method, you would run `__import__('os').system("<command to run>")`
+	* This allows for dynamic imports, making it useful in restricted environments or when the module name is determined at runtime.
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://www.hackthebox.com/achievement/machine/391579/359
