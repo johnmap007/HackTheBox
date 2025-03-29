@@ -1,4 +1,4 @@
-Tags: 
+Tags: #Linux/Ubuntu #Easy #Python #Gunicorn #Python-Object-Introspection #RCE #Weak-Hashing-Algorithms #SQLite3 #Source-Code-Analysis/Local-script #Sudo-Misconfiguration 
 # **Nmap Results**
 
 ```text
@@ -40,9 +40,9 @@ I registered an account with username "test" and password "test". The only added
 
 I'm going to try escaping the sandbox now. 
 
-Keywords such as "import", "os", "subprocess", "builtins", "exec", and "eval" are all banned, along with many more I haven't tried, so we can't just import a module and execute a system command, or use python's builtin methods "exec" or "eval" to break out of this sandbox.  
+Keywords such as "import", "os", "subprocess", "builtins", "exec", and "eval" are all banned (and probably many more I haven't tried), so we can't just import a module and execute a system command, or use python's builtin methods "exec" or "eval" to break out of this sandbox.  
 
-We want to find out which builtin objects are available and which modules are loaded into memory right now. The line `().__class__.__base__.__subclasses__()` tells us just that.
+It's useful to know that in Python, everything is an object. Instead of importing new modules, it's better to enumerate which builtin objects are loaded into memory right now. This technique is called **Object Introspection** and is a classic sandbox escape trick. The line `().__class__.__base__.__subclasses__()` tells us just that.
 
 >[!info] Quick breakdown of the one-liner
 >1. `()` --> Creates an empty tuple instance
@@ -113,17 +113,110 @@ I used this password to SSH into the system as Martin and was successful.
 <br>
 <br>
 # **Privilege Escalation**  
+After executing `sudo -l`, I've discovered Martin can run **/usr/bin/backy.sh** without a password. It seems to be a wrapper for the actual backy binary. Here's what's written:
 
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works 
-* Any modified code (and why you modified it)
-* Proof of privilege escalation (screenshot showing ip address and privileged username)
+```bash
+#!/bin/bash
+
+if [[ $# -ne 1 ]]; then
+    /usr/bin/echo "Usage: $0 <task.json>"
+    exit 1
+fi
+
+json_file="$1"
+
+if [[ ! -f "$json_file" ]]; then
+    /usr/bin/echo "Error: File '$json_file' not found."
+    exit 1
+fi
+
+allowed_paths=("/var/" "/home/")
+
+updated_json=$(/usr/bin/jq '.directories_to_archive |= map(gsub("\\.\\./"; ""))' "$json_file")
+
+/usr/bin/echo "$updated_json" > "$json_file"
+
+directories_to_archive=$(/usr/bin/echo "$updated_json" | /usr/bin/jq -r '.directories_to_archive[]')
+
+is_allowed_path() {
+    local path="$1"
+    for allowed_path in "${allowed_paths[@]}"; do
+        if [[ "$path" == $allowed_path* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+for dir in $directories_to_archive; do
+    if ! is_allowed_path "$dir"; then
+        /usr/bin/echo "Error: $dir is not allowed. Only directories under /var/ and /home/ are allowed."
+        exit 1
+    fi
+done
+
+/usr/bin/backy "$json_file"
+```
+
+There are a few checks performed before the backy binary is called on the directory we want archived:
+1. Only one argument is present and the path exists
+2. All instances of the pattern "../" are removed from the "directories_to_archive" key
+3. The paths specified in that key are either in /home or /var, and nowhere else.
+
+The key thing to note here is the `jq` line that filters out the `../` pattern. It doesn't remove all dots or slashes, just that specific pattern. So to back out of the directories we're restricted to, we can write `....//`. After the `jq` filter, it becomes `../`, but it doesn't do more than one pass, so it misses this. 
+
+Backy requires a **task.json** file with instructions on what to backup and where it should save the archive. Inside Martin's home directory, there's a **backups** folder with an example .tar.bz2 archive of the webapp we saw earlier, and a task.json file:
+
+![[Pasted image 20250329140621.png]]
+
+Here are the contents of task.json:
+
+```json
+{
+        "destination": "/home/martin/backups/",
+        "multiprocessing": true,
+        "verbose_log": false,
+        "directories_to_archive": [
+                "/home/app-production/app"
+        ],
+
+        "exclude": [
+                ".*"
+        ]
+}
+```
+
+We should make a copy of this, insert our payload, and remove the "exclude" key, as that will tell backy to not include hidden files (files that start with '.') in the archive.
+
+This is what our task2.json file should look like:
+
+```json
+{
+        "destination": "/home/martin/backups/",
+        "multiprocessing": true,
+        "verbose_log": false,
+        "directories_to_archive": [
+                "/home/....//root/"
+        ]
+}
+```
+
+Now we run `sudo /usr/bin/backy.sh task2.json` and extract the archive. To extract a .tar.bz2 archive, you pass the j flag to specify bz2 encoding:
+
+![[Pasted image 20250329141455.png]]
+
+You could just grab the root.txt flag, but we want a shell. Luckily, there's a .ssh folder here with an ssh private key:
+
+![[Pasted image 20250329141823.png]]
+
+I copied this and saved it to my machine. Before we can use it, we have to set the correct permissions so that ssh will accept it. So we run `chmod 600 id_rsa`. Then we can run `ssh -i id_rsa root@10.10.11.62` and get root:
+
+![[Pasted image 20250329142040.png]]
 <br>
 <br>
 # Skills Learned
-* `().__class__.__base__.__subclasses__()` is very useful when trying to **escape python sandboxes**. When builtin functions or importing modules are restricted, this line will print all builtins and modules that are already loaded in memory. Once you've found the class you're looking for and noted down the index (the position of the class in the list), you can assign it to a variable and use it as normal. See the one-liner [explanation](#^introspection-one-liner) above for a better understanding 
+* **Object Introspection** is a useful technique for **escaping code environment sandboxes** where certain builtin functions are disallowed or when importing modules is restricted. It's a common attack found in Python code editors where you traverse the object hierarchy to get a list of objects loaded in memory. An example one-liner is `().__class__.__base__.__subclasses__()`. Once you've found the class you're looking for and noted down the index (the position of the class in the list), you can assign it to a variable and use it as normal. See the one-liner [explanation](#^introspection-one-liner) above for a better understanding
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://www.hackthebox.com/achievement/machine/391579/653
