@@ -1,4 +1,4 @@
-Tags: 
+Tags: #Hard #Windows #Spring-Boot #FTP #FTP-Anonymous-Login #Source-Code-Analysis #Java 
 # **Nmap Results**
 
 ```text
@@ -42,7 +42,6 @@ Nmap done: 1 IP address (1 host up) scanned in 22.74 seconds
 ```
 <br>
 <br>
-
 # **Service Enumeration**
 
 First thing to look at should be the FTP server and grab what we can, given that anonymous login is allowed. There are 2 things, a java JAR app and a zip file:
@@ -57,7 +56,86 @@ I also unzipped the zip file and found files and folders that looked like a Java
 
 The earlier nmap scan also found a web server on port 8080, which ended up displaying the same thing as above. We should take a look at that source code now.
 
+In **FileUploadController.java**, the `handleFileUpload()` method is what gets called first when a user visits the site:
 
+```java
+@PostMapping("/")
+public String handleFileUpload(@RequestParam("file") MultipartFile file,
+		RedirectAttributes redirectAttributes, Model model) {
+
+	try {
+		Employee person = Client.parseXML(file.getInputStream());
+		model.addAttribute("name", person.getName());
+		model.addAttribute("id", person.getId());
+		model.addAttribute("email", person.getEmail());
+		model.addAttribute("phone", person.getPhone());
+		model.addAttribute("profile", person.getProfile());
+		model.addAttribute("title", person.getTitle());
+		model.addAttribute("skills", person.getSkills());
+		model.addAttribute("educationTitle", person.getEducationTitle());
+		model.addAttribute("educationText", person.getEducationText());
+		model.addAttribute("talentTitle1", person.getTalentTitles()[0]);
+		model.addAttribute("talentTitle2", person.getTalentTitles()[1]);
+		model.addAttribute("talentTitle3", person.getTalentTitles()[2]);
+		model.addAttribute("talentText1", person.getTalentTextes()[0]);
+		model.addAttribute("talentText2", person.getTalentTextes()[1]);
+		model.addAttribute("talentText3", person.getTalentTextes()[2]);		
+		model.addAttribute("message", person.getMessage());
+
+	} catch (Exception e) {
+		e.printStackTrace();
+	}
+
+	return "srt-resume";
+}
+```
+
+There's a call to `parseXML()` in the try block, which is located in **Client.java**:
+
+```java
+public static Employee parseXML(InputStream uploadFile) throws IOException{
+	
+	try {
+	
+	
+		Reader targetReader = new InputStreamReader(uploadFile);
+		Unmarshaller unmarshaller = new Unmarshaller(Employee.class);
+		Employee employee = (Employee)unmarshaller.unmarshal(targetReader);
+	
+	
+		System.out.println("XML Unmarschall Sucessfully");
+		System.out.println(employee.getName());
+		System.out.println(employee.getId());
+		System.out.println(employee.getEducationText());
+	
+		employee.setMessage("Parsing Successfull");
+		
+		return employee;
+	
+	 } catch (Exception e) {
+		e.printStackTrace();
+	
+		Employee employee = new Employee();
+		employee.setMessage(e.toString());
+	
+		return employee;
+	
+	 }
+	
+	}
+```
+
+These lines are of interest to us:
+
+```java
+Reader targetReader = new InputStreamReader(uploadFile);
+Unmarshaller unmarshaller = new Unmarshaller(Employee.class);
+Employee employee = (Employee)unmarshaller.unmarshal(targetReader);
+```
+
+If you look at the earlier image of the website, you see that it allows the user to upload an XML file containing "Employee data". That file is passed as an argument to `parseXML()`, as you can see in `handleFileUpload()`. 
+
+Here, we have an Employee class that is instantiated by deserializing whatever's in that file, which is completely controlled by the user. This is known as **insecure deserialization**. 
 <br>
 <br>
 # **Exploitation**
