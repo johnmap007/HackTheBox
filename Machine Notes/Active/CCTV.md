@@ -1,4 +1,4 @@
-Tags: 
+Tags: #Easy #Linux/Ubuntu #Apache #Default-Creds #Blind-SQL-Injection #Weak-Passwords #Overprivileged-Processes #Command-Injection 
 # **Nmap Results**
 
 ```text
@@ -60,30 +60,39 @@ hashcat found the password to admin, which we already knew was just "admin", but
 ![[Pasted image 20260524191550.png]]
 
 These creds are valid for SSH login and we are now logged in as mark on the machine.
-
+<br>
+<br>
+# **Privilege Escalation** 
 mark doesn't have sudo privileges, there is nothing in his home directory, and nothing of interest in /opt. However, there are some interesting open ports listening locally. I port forwarded a few of them and port 8765 seems to be the most interesting one:
 
 ![[Pasted image 20260524194618.png]]
 
 It's some kind of portal for motionEye, the GUI app for the CLI tool "motion". It's a video surveillance app. Looking in /etc, we see a **motioneye** directory. In there, there's 2 config files, motioneye.conf and motion.conf. The latter contains valid credentials for this page, which are `admin:989c5a8ee87a0e9521ec81a79187d162109282f0`. 
 
-There isn't more to see here, but if we look back in /etc/, there's another directory called **motion**, with another config file that tells us that the installed version of the CLI tool is 4.7.1 (you also could've found this by just running `motion` with no arguments).
+There isn't more to see here, but if we look back in /etc/, there's another directory called **motion**, with another config file that tells us that the installed version of the CLI tool is 4.7.1 (you also could've found this by just running `motion` with no arguments). You'll find that this version is vulnerable to command injection according to [this](https://www.exploit-db.com/exploits/52481) ExploitDB post. This is due to a lack of input sanitization on the back end, relying only on front end JavaScript to do so.
 
-NOTES FOR CONTINUING NEXT TIME:
-- motion version 4.7.1 has a command injection vulnerability
-- the creds for mark are mark:opensesame
-- the API port is 7999 and the webUI listens on 8765
-- the config files are in /etc/motioneye and /etc/motion
-<br>
-<br>
-# **Privilege Escalation** 
+To bypass this, you just rewrite the configUiValid() method to return true unconditionally, like so:
 
+```js
+function configUiValid() {
+	return true;
+}
+```
 
+The vulnerable field is *image file name* under the "Still Images" tab in the camera settings. The value here is read by the motion process once it restarts after you apply changes, and it interprets all special characters as if it was shell syntax, so you can use things like command substitution:
+
+![[Pasted image 20260525130025.png]]
+
+Now write your reverse shell in there and set up a listener. Apply changes and have the camera take a still image. You should have caught a shell as root now:
+
+![[Pasted image 20260525130123.png]]
+
+That's it!
 <br>
 <br>
 # Skills Learned
-Document here what you've learned after completing the box
+- There are 2 places where input sanitization can be implemented, front end JS and back end source code. Front end is easier to bypass because you essentially have full control over the JS that runs in your browser
 <br>
 <br>
 # Proof of Pwn
-Paste link to HTB Pwn notification after owning root
+https://labs.hackthebox.com/achievement/machine/391579/847
