@@ -1,4 +1,4 @@
-Tags: #Linux/Ubuntu #Easy #Nginx #Insecure-PHP-Object-Deserialization 
+Tags: #Linux/Ubuntu #Easy #Nginx #Insecure-Deserialization 
 # **Nmap Results**
 
 ```text

