@@ -79,7 +79,7 @@ We saw admin's GUID earlier when we sent a GET request to **/api/v1/user/1**, we
 
 ![[Pasted image 20261001185420.png]]
 
-Seems to have worked since we can log in as admin:
+Seems to have worked since we can log in as admin, confirming the IDOR/BOLA vulnerability:
 
 ![[Pasted image 20261001185814.png]]
 
@@ -93,7 +93,13 @@ There are 2 endpoints exclusively accessible to admins, **/api/v1/admin/file** t
 
 ![[Pasted image 20261001191406.png]]
 
-We have to decode the JWT, add a "debug" parameter, and encode it back, except we'll need the JWT signing key to do so. We'll have to look around and guess filenames with the other endpoint. Let's see what's in `/proc/self/environ`:
+We have to decode the JWT, add a "debug" parameter, and encode it back, except we'll need the JWT signing key to do so. We'll have to look around and guess filenames with the other endpoint. 
+
+Let's see what's in `/proc/self/environ`:
+
+![[Pasted image 20261002144109.png]]
+
+Here's a cleaned up version of it:
 
 ```
 APP_MODULE=app.main:app
@@ -145,7 +151,7 @@ The app imports some settings/config data through this line: `from app.core.conf
 
 ![[Pasted image 20261002134345.png]]
 
-Here's a cleaned up version of it:
+Beautified output:
 
 ```python
 from pydantic import AnyHttpUrl, BaseSettings, EmailStr, validator
